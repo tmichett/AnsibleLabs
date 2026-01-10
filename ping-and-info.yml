@@ -1,0 +1,19 @@
+---
+- name: Ping test and gather system information
+  hosts: all
+  gather_facts: yes
+  tasks:
+    - name: Test connectivity with ping module
+      ansible.builtin.ping:
+      register: ping_result
+
+    - name: Display system information
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Hostname: {{ ansible_hostname }}"
+          - "IP Address: {{ ansible_default_ipv4.address | default('N/A') }}"
+          - "Memory Total: {{ ansible_memory_mb.real.total | default('N/A') }} MB"
+          - "Memory Free: {{ ansible_memory_mb.real.free | default('N/A') }} MB"
+          - "Memory Used: {{ ansible_memory_mb.real.used | default('N/A') }} MB"
+          - "=========================================="

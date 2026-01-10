@@ -1,0 +1,12 @@
+---
+ansible-navigator:
+  execution-environment:
+    image: quay.io/ansible/awx-ee:latest
+    pull-policy: missing
+  logging:
+    append: false
+    level: warning
+  playbook-artifact:
+    enable: false
+  stdout:
+    enabled: true
