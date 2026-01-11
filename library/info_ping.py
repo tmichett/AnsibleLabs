@@ -72,6 +72,7 @@ memory_available_mb:
 import platform
 import socket
 import os
+import subprocess
 
 from ansible.module_utils.basic import AnsibleModule
 
@@ -79,11 +80,33 @@ from ansible.module_utils.basic import AnsibleModule
 def get_fqdn():
     """Get the Fully Qualified Domain Name of the host."""
     try:
+        # Try hostname -f first (works on both Linux and macOS)
+        if platform.system() in ['Darwin', 'Linux']:
+            try:
+                result = subprocess.run(['hostname', '-f'], 
+                                      capture_output=True, 
+                                      text=True, 
+                                      timeout=5)
+                if result.returncode == 0 and result.stdout.strip():
+                    fqdn = result.stdout.strip()
+                    # Don't return reverse DNS entries
+                    if not fqdn.endswith('.in-addr.arpa') and not fqdn.endswith('.ip6.arpa'):
+                        return fqdn
+            except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
+                pass
+        
+        # Try socket.getfqdn() but filter out reverse DNS
         fqdn = socket.getfqdn()
-        if fqdn:
+        if fqdn and not fqdn.endswith('.in-addr.arpa') and not fqdn.endswith('.ip6.arpa'):
             return fqdn
-        # Fallback to hostname if FQDN is not available
-        return socket.gethostname()
+        
+        # Fallback to hostname
+        hostname = socket.gethostname()
+        if hostname:
+            return hostname
+        
+        # Last resort
+        return platform.node()
     except Exception:
         return platform.node()
 
@@ -91,15 +114,39 @@ def get_fqdn():
 def get_cpu_info():
     """Get CPU make and model information."""
     try:
-        # Try to read from /proc/cpuinfo (Linux)
-        if os.path.exists('/proc/cpuinfo'):
-            with open('/proc/cpuinfo', 'r') as f:
-                for line in f:
-                    if 'model name' in line.lower() or 'processor' in line.lower():
+        system = platform.system()
+        
+        # macOS - use sysctl
+        if system == 'Darwin':
+            try:
+                result = subprocess.run(['sysctl', '-n', 'machdep.cpu.brand_string'],
+                                      capture_output=True,
+                                      text=True,
+                                      timeout=5)
+                if result.returncode == 0 and result.stdout.strip():
+                    return result.stdout.strip()
+            except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
+                pass
+        
+        # Linux - read from /proc/cpuinfo
+        elif system == 'Linux':
+            if os.path.exists('/proc/cpuinfo'):
+                with open('/proc/cpuinfo', 'r') as f:
+                    for line in f:
                         if 'model name' in line.lower():
                             return line.split(':')[1].strip()
-        # Fallback to platform processor
-        return platform.processor() or platform.machine()
+        
+        # Fallback: Try platform.processor()
+        processor = platform.processor()
+        if processor and processor != '' and processor != 'i386':
+            return processor
+        
+        # Last resort: platform.machine() if it's not generic
+        machine = platform.machine()
+        if machine and machine not in ['i386', 'x86_64', 'AMD64']:
+            return machine
+        
+        return "Unknown CPU"
     except Exception:
         return "Unknown CPU"
 
@@ -107,31 +154,84 @@ def get_cpu_info():
 def get_memory_info():
     """Get memory information in megabytes."""
     try:
-        # Try to read from /proc/meminfo (Linux)
-        if os.path.exists('/proc/meminfo'):
-            meminfo = {}
-            with open('/proc/meminfo', 'r') as f:
-                for line in f:
-                    parts = line.split()
-                    if len(parts) >= 2:
-                        key = parts[0].rstrip(':')
-                        value = int(parts[1])
-                        meminfo[key] = value
-            
-            total_mb = meminfo.get('MemTotal', 0) // 1024
-            available_mb = meminfo.get('MemAvailable', 0) // 1024
-            # If MemAvailable is not available, calculate from MemFree and buffers/cached
-            if available_mb == 0:
-                mem_free = meminfo.get('MemFree', 0) // 1024
-                buffers = meminfo.get('Buffers', 0) // 1024
-                cached = meminfo.get('Cached', 0) // 1024
-                available_mb = mem_free + buffers + cached
-            
-            return total_mb, available_mb
-        else:
-            # Fallback for non-Linux systems
-            # This is a simplified approach - may not work on all systems
-            return 0, 0
+        system = platform.system()
+        
+        # macOS - use sysctl
+        if system == 'Darwin':
+            try:
+                # Get total memory
+                result = subprocess.run(['sysctl', '-n', 'hw.memsize'],
+                                      capture_output=True,
+                                      text=True,
+                                      timeout=5)
+                if result.returncode == 0:
+                    total_bytes = int(result.stdout.strip())
+                    total_mb = total_bytes // (1024 * 1024)
+                    
+                    # Get available memory using vm_stat (approximate)
+                    try:
+                        result = subprocess.run(['vm_stat'],
+                                              capture_output=True,
+                                              text=True,
+                                              timeout=5)
+                        if result.returncode == 0:
+                            # Parse vm_stat output for free pages
+                            # This is approximate - macOS doesn't have a simple "available" metric
+                            lines = result.stdout.split('\n')
+                            free_pages = 0
+                            inactive_pages = 0
+                            page_size = 4096  # Default page size on macOS
+                            
+                            for line in lines:
+                                if 'Pages free' in line:
+                                    try:
+                                        free_pages = int(line.split(':')[1].strip().rstrip('.'))
+                                    except (ValueError, IndexError):
+                                        pass
+                                elif 'Pages inactive' in line:
+                                    try:
+                                        inactive_pages = int(line.split(':')[1].strip().rstrip('.'))
+                                    except (ValueError, IndexError):
+                                        pass
+                            
+                            # Calculate available memory (free + inactive)
+                            available_bytes = (free_pages + inactive_pages) * page_size
+                            available_mb = available_bytes // (1024 * 1024)
+                            
+                            return total_mb, available_mb
+                    except Exception:
+                        pass
+                    
+                    # If vm_stat parsing failed, return total as available (conservative)
+                    return total_mb, total_mb
+            except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError, ValueError):
+                pass
+        
+        # Linux - read from /proc/meminfo
+        elif system == 'Linux':
+            if os.path.exists('/proc/meminfo'):
+                meminfo = {}
+                with open('/proc/meminfo', 'r') as f:
+                    for line in f:
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            key = parts[0].rstrip(':')
+                            value = int(parts[1])
+                            meminfo[key] = value
+                
+                total_mb = meminfo.get('MemTotal', 0) // 1024
+                available_mb = meminfo.get('MemAvailable', 0) // 1024
+                # If MemAvailable is not available, calculate from MemFree and buffers/cached
+                if available_mb == 0:
+                    mem_free = meminfo.get('MemFree', 0) // 1024
+                    buffers = meminfo.get('Buffers', 0) // 1024
+                    cached = meminfo.get('Cached', 0) // 1024
+                    available_mb = mem_free + buffers + cached
+                
+                return total_mb, available_mb
+        
+        # Fallback for other systems
+        return 0, 0
     except Exception:
         return 0, 0
 
