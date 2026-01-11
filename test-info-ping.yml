@@ -1,0 +1,23 @@
+---
+- name: Test info_ping custom module
+  hosts: all
+  gather_facts: no
+  tasks:
+    - name: Test info_ping module
+      info_ping:
+      register: ping_result
+
+    - name: Display ping results
+      ansible.builtin.debug:
+        var: ping_result
+
+    - name: Display formatted system information
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Ping Status: {{ ping_result.ping }}"
+          - "FQDN: {{ ping_result.fqdn }}"
+          - "CPU Model: {{ ping_result.cpu_model }}"
+          - "Total Memory: {{ ping_result.memory_total_mb }} MB"
+          - "Available Memory: {{ ping_result.memory_available_mb }} MB"
+          - "=========================================="
