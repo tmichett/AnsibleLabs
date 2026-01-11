@@ -130,9 +130,12 @@ The `ansible.cfg` file provides default settings:
 - Configures privilege escalation (sudo)
 - Enables SSH connection pipelining for better performance
 - Sets color output for better readability
-- Suppresses Python interpreter discovery warnings (`interpreter_python = auto_legacy_silent`)
+- Configures Python interpreter discovery (`interpreter_python = auto`)
+- Suppresses deprecation warnings (`deprecation_warnings = False`)
 
-**Note:** The `interpreter_python = auto_legacy_silent` setting suppresses the Python interpreter discovery warnings that Ansible displays when connecting to hosts. This provides cleaner output in lab environments while still allowing Ansible to automatically discover the correct Python interpreter on each host.
+**Note:** The `interpreter_python = auto` setting allows Ansible to automatically discover the correct Python interpreter on each host. The `deprecation_warnings = False` setting suppresses deprecation warnings (such as warnings about deprecated `auto_legacy_silent` option) to provide cleaner output in lab environments.
+
+**Deprecation Note:** The `auto_legacy_silent` option is deprecated as of Ansible Core 2.19 and will be removed in version 2.21. It now has the same effect as `auto`, so we use `auto` instead for future compatibility.
 
 ### inventory
 
